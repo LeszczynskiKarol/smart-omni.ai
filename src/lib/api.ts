@@ -1,10 +1,26 @@
 const API = "https://voice.torweb.pl";
-const TOKEN = "f7c26267a418c3ddeaafbdcbf3e883e958b68f7df586e8b58492a6869b9e36dd";
+
+export const getToken = (): string =>
+  (typeof localStorage !== "undefined" && localStorage.getItem("omni_token")) ||
+  "";
+export const setToken = (t: string) => localStorage.setItem("omni_token", t);
+export const clearToken = () => localStorage.removeItem("omni_token");
 
 const h = () => ({
   "Content-Type": "application/json",
-  Authorization: `Bearer ${TOKEN}`,
+  Authorization: `Bearer ${getToken()}`,
 });
+
+export async function login(username: string, password: string): Promise<void> {
+  const r = await fetch(`${API}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!r.ok) throw new Error("Nieprawidłowe dane logowania");
+  const { token } = await r.json();
+  setToken(token);
+}
 
 // ── Types ──
 
@@ -145,10 +161,7 @@ export async function getConversation(
   return r.json();
 }
 
-export async function updateTopic(
-  id: string,
-  topic: string,
-): Promise<void> {
+export async function updateTopic(id: string, topic: string): Promise<void> {
   await fetch(`${API}/api/conversations/${id}`, {
     method: "PUT",
     headers: h(),
@@ -164,9 +177,12 @@ export async function deleteConversation(id: string): Promise<void> {
 }
 
 export async function globalSearch(q: string): Promise<SearchResult> {
-  const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}&limit=20`, {
-    headers: h(),
-  });
+  const r = await fetch(
+    `${API}/api/search?q=${encodeURIComponent(q)}&limit=20`,
+    {
+      headers: h(),
+    },
+  );
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }

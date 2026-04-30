@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import LoginForm from "./LoginForm";
+import { getToken, clearToken } from "../lib/api";
 import {
   sendVoice,
   getConversations,
@@ -43,6 +45,8 @@ interface LogEntry {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export default function App() {
+  const [authed, setAuthed] = useState(() => !!getToken());
+  if (!authed) return <LoginForm onLogin={() => setAuthed(true)} />;
   // View state
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailConv, setDetailConv] = useState<ConversationDetail | null>(null);
@@ -77,7 +81,9 @@ export default function App() {
     } catch {}
   }, []);
 
-  useEffect(() => { refreshSidebar(); }, []);
+  useEffect(() => {
+    refreshSidebar();
+  }, []);
 
   // ── Auto-scroll chat ──
 
@@ -108,12 +114,16 @@ export default function App() {
     if (!detailConv) return;
     if (detailSearch.trim().length < 2) {
       // Reload full
-      getConversation(detailConv.id).then(setDetailConv).catch(() => {});
+      getConversation(detailConv.id)
+        .then(setDetailConv)
+        .catch(() => {});
       return;
     }
     const t = setTimeout(async () => {
       try {
-        setDetailConv(await getConversation(detailConv.id, detailSearch.trim()));
+        setDetailConv(
+          await getConversation(detailConv.id, detailSearch.trim()),
+        );
       } catch {}
     }, 300);
     return () => clearTimeout(t);
@@ -121,11 +131,23 @@ export default function App() {
 
   // ── Add log entry ──
 
-  const addLog = (type: LogEntry["type"], text: string, stats?: Stats, actions?: VoiceResponse["actions"]) => {
-    setLog((p) => [...p, {
-      id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
-      type, text, time: new Date(), stats, actions,
-    }]);
+  const addLog = (
+    type: LogEntry["type"],
+    text: string,
+    stats?: Stats,
+    actions?: VoiceResponse["actions"],
+  ) => {
+    setLog((p) => [
+      ...p,
+      {
+        id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+        type,
+        text,
+        time: new Date(),
+        stats,
+        actions,
+      },
+    ]);
   };
 
   // ── Process text (voice or keyboard) ──
@@ -142,8 +164,13 @@ export default function App() {
       addLog("assistant", res.response, res.stats, res.actions);
 
       for (const a of res.actions || []) {
-        if (a.status === "success") addLog("action", `✅ ${a.action}: ${JSON.stringify(a.result).slice(0, 120)}`);
-        else if (a.status === "error") addLog("error", `❌ ${a.action}: ${a.error}`);
+        if (a.status === "success")
+          addLog(
+            "action",
+            `✅ ${a.action}: ${JSON.stringify(a.result).slice(0, 120)}`,
+          );
+        else if (a.status === "error")
+          addLog("error", `❌ ${a.action}: ${a.error}`);
       }
 
       // TTS
@@ -169,23 +196,41 @@ export default function App() {
     setState("listening");
 
     const rec = createRecognizer({
-      onResult: (t) => { setTranscript(""); recRef.current = null; processText(t); },
+      onResult: (t) => {
+        setTranscript("");
+        recRef.current = null;
+        processText(t);
+      },
       onPartial: (t) => setTranscript(t),
-      onEnd: () => { if (state === "listening") setState("idle"); },
-      onError: (e) => { addLog("error", `STT: ${e}`); setState("idle"); },
+      onEnd: () => {
+        if (state === "listening") setState("idle");
+      },
+      onError: (e) => {
+        addLog("error", `STT: ${e}`);
+        setState("idle");
+      },
     });
 
-    if (rec) { recRef.current = rec; rec.start(); }
+    if (rec) {
+      recRef.current = rec;
+      rec.start();
+    }
   };
 
   const stopListening = () => {
-    if (recRef.current) { recRef.current.stop(); recRef.current = null; }
+    if (recRef.current) {
+      recRef.current.stop();
+      recRef.current = null;
+    }
   };
 
   const toggleVoice = () => {
     if (state === "listening") stopListening();
     else if (state === "idle") startListening();
-    else if (state === "speaking") { stopSpeaking(); setState("idle"); }
+    else if (state === "speaking") {
+      stopSpeaking();
+      setState("idle");
+    }
   };
 
   // ── Keyboard send ──
@@ -228,11 +273,17 @@ export default function App() {
         type: m.role as any,
         text: m.content,
         time: new Date(m.createdAt),
-        stats: m.inputTokens != null ? {
-          inputTokens: m.inputTokens!, outputTokens: m.outputTokens!,
-          totalTokens: m.totalTokens!, costUsd: m.costUsd!,
-          model: m.model!, latencyMs: m.latencyMs!,
-        } : undefined,
+        stats:
+          m.inputTokens != null
+            ? {
+                inputTokens: m.inputTokens!,
+                outputTokens: m.outputTokens!,
+                totalTokens: m.totalTokens!,
+                costUsd: m.costUsd!,
+                model: m.model!,
+                latencyMs: m.latencyMs!,
+              }
+            : undefined,
       }));
       setLog(entries);
     } catch {}
@@ -243,9 +294,11 @@ export default function App() {
   const saveTopic = async () => {
     if (!editingId || !editValue.trim()) return;
     await updateTopic(editingId, editValue.trim());
-    setConversations((p) => p.map((c) =>
-      c.id === editingId ? { ...c, topic: editValue.trim() } : c
-    ));
+    setConversations((p) =>
+      p.map((c) =>
+        c.id === editingId ? { ...c, topic: editValue.trim() } : c,
+      ),
+    );
     setEditingId(null);
   };
 
@@ -267,12 +320,19 @@ export default function App() {
   return (
     <div className="h-screen flex overflow-hidden">
       {/* ── Sidebar ── */}
-      <aside className={`${sidebarOpen ? "w-80" : "w-0"} shrink-0 bg-surface-1 border-r border-surface-3 flex flex-col transition-all duration-200 overflow-hidden`}>
+      <aside
+        className={`${sidebarOpen ? "w-80" : "w-0"} shrink-0 bg-surface-1 border-r border-surface-3 flex flex-col transition-all duration-200 overflow-hidden`}
+      >
         {/* Sidebar header */}
         <div className="p-4 border-b border-surface-3">
           <div className="flex items-center justify-between mb-3">
-            <h1 className="text-lg font-semibold text-white tracking-tight">Smart Omni</h1>
-            <button onClick={newConv} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors">
+            <h1 className="text-lg font-semibold text-white tracking-tight">
+              Smart Omni
+            </h1>
+            <button
+              onClick={newConv}
+              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+            >
               + Nowa
             </button>
           </div>
@@ -287,7 +347,12 @@ export default function App() {
               className="w-full bg-surface-2 border border-surface-4 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-accent/50 transition-colors"
             />
             {searchQuery && (
-              <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-sm">✕</button>
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-sm"
+              >
+                ✕
+              </button>
             )}
           </div>
         </div>
@@ -298,17 +363,17 @@ export default function App() {
             <StatMini label="Konw." value={stats.totalConversations} />
             <StatMini label="Wiad." value={stats.totalMessages} />
             <StatMini label="Tokeny" value={fmtTokens(stats.tokens.total)} />
-            <StatMini label="Koszt" value={`$${stats.totalCostUsd.toFixed(2)}`} />
+            <StatMini
+              label="Koszt"
+              value={`$${stats.totalCostUsd.toFixed(2)}`}
+            />
           </div>
         )}
 
         {/* Conversation list */}
         <div className="flex-1 overflow-y-auto">
           {searchResults ? (
-            <SearchResults
-              results={searchResults}
-              onOpenConv={openDetail}
-            />
+            <SearchResults results={searchResults} onOpenConv={openDetail} />
           ) : (
             conversations.map((c) => (
               <ConvItem
@@ -319,7 +384,10 @@ export default function App() {
                 editValue={editValue}
                 onEditChange={setEditValue}
                 onEditSave={saveTopic}
-                onStartEdit={() => { setEditingId(c.id); setEditValue(c.topic); }}
+                onStartEdit={() => {
+                  setEditingId(c.id);
+                  setEditValue(c.topic);
+                }}
                 onClick={() => openDetail(c.id)}
                 onContinue={() => continueConv(c.id)}
                 onDelete={() => handleDelete(c.id)}
@@ -334,14 +402,24 @@ export default function App() {
         {/* Top bar */}
         <header className="h-14 px-4 flex items-center justify-between border-b border-surface-3 bg-surface-1/50 backdrop-blur-sm shrink-0">
           <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-400 hover:text-white transition-colors">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="text-gray-400 hover:text-white transition-colors"
+            >
               {sidebarOpen ? "◀" : "▶"}
             </button>
             {detailConv ? (
               <div className="flex items-center gap-2">
-                <button onClick={() => setDetailConv(null)} className="text-accent text-sm hover:underline">← Chat</button>
+                <button
+                  onClick={() => setDetailConv(null)}
+                  className="text-accent text-sm hover:underline"
+                >
+                  ← Chat
+                </button>
                 <span className="text-gray-500">|</span>
-                <span className="text-white font-medium truncate max-w-xs">{detailConv.topic}</span>
+                <span className="text-white font-medium truncate max-w-xs">
+                  {detailConv.topic}
+                </span>
               </div>
             ) : (
               <span className="text-sm text-gray-400">
@@ -349,11 +427,23 @@ export default function App() {
               </span>
             )}
           </div>
-          {!sttAvailable && (
-            <span className="text-xs text-yellow-500/70 bg-yellow-500/10 px-2 py-1 rounded">
-              Przeglądarka nie obsługuje mikrofonu
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {!sttAvailable && (
+              <span className="text-xs text-yellow-500/70 bg-yellow-500/10 px-2 py-1 rounded">
+                Przeglądarka nie obsługuje mikrofonu
+              </span>
+            )}
+            <button
+              onClick={() => {
+                clearToken();
+                setAuthed(false);
+              }}
+              className="text-xs text-gray-600 hover:text-gray-300 px-2 py-1 rounded transition-colors"
+              title="Wyloguj"
+            >
+              ⎋ Wyloguj
+            </button>
+          </div>
         </header>
 
         {/* Content area */}
@@ -370,9 +460,13 @@ export default function App() {
             <div className="flex-1 overflow-y-auto px-4 py-6">
               <div className="max-w-3xl mx-auto space-y-3">
                 {log.length === 0 && <EmptyState />}
-                {log.map((e) => <ChatBubble key={e.id} entry={e} />)}
+                {log.map((e) => (
+                  <ChatBubble key={e.id} entry={e} />
+                ))}
                 {state === "listening" && transcript && (
-                  <div className="animate-fade-in text-accent/70 italic text-sm pl-4 border-l-2 border-accent/30">{transcript}</div>
+                  <div className="animate-fade-in text-accent/70 italic text-sm pl-4 border-l-2 border-accent/30">
+                    {transcript}
+                  </div>
                 )}
                 <div ref={chatEndRef} />
               </div>
@@ -387,20 +481,28 @@ export default function App() {
                   disabled={state === "processing" || !sttAvailable}
                   className="relative shrink-0 group"
                 >
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
-                    state === "listening"
-                      ? "bg-red-500/20 text-red-400 ring-2 ring-red-500/40"
-                      : state === "speaking"
-                        ? "bg-accent/20 text-accent"
-                        : state === "processing"
-                          ? "bg-yellow-500/20 text-yellow-400"
-                          : "bg-surface-3 text-gray-400 hover:bg-surface-4 hover:text-white"
-                  } ${!sttAvailable ? "opacity-40 cursor-not-allowed" : ""}`}>
+                  <div
+                    className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
+                      state === "listening"
+                        ? "bg-red-500/20 text-red-400 ring-2 ring-red-500/40"
+                        : state === "speaking"
+                          ? "bg-accent/20 text-accent"
+                          : state === "processing"
+                            ? "bg-yellow-500/20 text-yellow-400"
+                            : "bg-surface-3 text-gray-400 hover:bg-surface-4 hover:text-white"
+                    } ${!sttAvailable ? "opacity-40 cursor-not-allowed" : ""}`}
+                  >
                     {state === "listening" && (
                       <div className="absolute inset-0 rounded-full bg-red-500/20 animate-pulse-ring" />
                     )}
                     <span className="text-xl relative z-10">
-                      {state === "listening" ? "⏹" : state === "speaking" ? "🔊" : state === "processing" ? "⏳" : "🎤"}
+                      {state === "listening"
+                        ? "⏹"
+                        : state === "speaking"
+                          ? "🔊"
+                          : state === "processing"
+                            ? "⏳"
+                            : "🎤"}
                     </span>
                   </div>
                 </button>
@@ -412,7 +514,9 @@ export default function App() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                  placeholder={state === "listening" ? "Słucham..." : "Wpisz komendę..."}
+                  placeholder={
+                    state === "listening" ? "Słucham..." : "Wpisz komendę..."
+                  }
                   disabled={state === "processing"}
                   className="flex-1 bg-surface-2 border border-surface-4 rounded-xl px-4 py-2.5 text-sm text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-accent/50 disabled:opacity-50 transition-colors"
                 />
@@ -432,8 +536,12 @@ export default function App() {
                 <p className="text-[10px] text-gray-600 font-mono">
                   {state === "listening" && "🔴 nasłuchuję..."}
                   {state === "processing" && "⏳ przetwarzam..."}
-                  {state === "speaking" && "🔊 mówię — kliknij mikrofon aby przerwać"}
-                  {state === "idle" && (sttAvailable ? "kliknij 🎤 lub wpisz komendę" : "wpisz komendę i naciśnij Enter")}
+                  {state === "speaking" &&
+                    "🔊 mówię — kliknij mikrofon aby przerwać"}
+                  {state === "idle" &&
+                    (sttAvailable
+                      ? "kliknij 🎤 lub wpisz komendę"
+                      : "wpisz komendę i naciśnij Enter")}
                 </p>
               </div>
             </div>
@@ -472,7 +580,10 @@ function EmptyState() {
           "Dodaj wydarzenie jutro o 14",
           "Co mam w kalendarzu?",
         ].map((ex) => (
-          <div key={ex} className="text-xs text-gray-500 bg-surface-2 rounded-lg px-3 py-2 border border-surface-3">
+          <div
+            key={ex}
+            className="text-xs text-gray-500 bg-surface-2 rounded-lg px-3 py-2 border border-surface-3"
+          >
             „{ex}"
           </div>
         ))}
@@ -489,16 +600,22 @@ function ChatBubble({ entry }: { entry: LogEntry }) {
 
   if (isAction || isError) {
     return (
-      <div className={`animate-slide-up text-xs font-mono px-3 py-1.5 rounded-lg ${
-        isError ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"
-      }`}>
+      <div
+        className={`animate-slide-up text-xs font-mono px-3 py-1.5 rounded-lg ${
+          isError
+            ? "bg-red-500/10 text-red-400"
+            : "bg-emerald-500/10 text-emerald-400"
+        }`}
+      >
         {entry.text}
       </div>
     );
   }
 
   return (
-    <div className={`animate-slide-up flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <div
+      className={`animate-slide-up flex ${isUser ? "justify-end" : "justify-start"}`}
+    >
       <div
         onClick={() => entry.stats && setShowStats(!showStats)}
         className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
@@ -507,21 +624,34 @@ function ChatBubble({ entry }: { entry: LogEntry }) {
             : "bg-surface-2 text-gray-200 rounded-bl-md border border-surface-3"
         } ${entry.stats ? "cursor-pointer" : ""}`}
       >
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">{entry.text}</p>
+        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+          {entry.text}
+        </p>
 
         {showStats && entry.stats && (
           <div className="mt-2 pt-2 border-t border-surface-4 text-[10px] font-mono text-gray-500 space-y-0.5">
-            <div>{entry.stats.inputTokens} in + {entry.stats.outputTokens} out = {entry.stats.totalTokens} tok</div>
-            <div>${entry.stats.costUsd.toFixed(5)} · {entry.stats.latencyMs}ms · {entry.stats.model}</div>
+            <div>
+              {entry.stats.inputTokens} in + {entry.stats.outputTokens} out ={" "}
+              {entry.stats.totalTokens} tok
+            </div>
+            <div>
+              ${entry.stats.costUsd.toFixed(5)} · {entry.stats.latencyMs}ms ·{" "}
+              {entry.stats.model}
+            </div>
           </div>
         )}
 
         <div className="flex items-center justify-end gap-2 mt-1">
           <span className="text-[10px] text-gray-600">
-            {entry.time.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}
+            {entry.time.toLocaleTimeString("pl-PL", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
           </span>
           {entry.stats && (
-            <span className="text-[10px] font-mono text-gray-600">${entry.stats.costUsd.toFixed(5)}</span>
+            <span className="text-[10px] font-mono text-gray-600">
+              ${entry.stats.costUsd.toFixed(5)}
+            </span>
           )}
         </div>
       </div>
@@ -529,7 +659,18 @@ function ChatBubble({ entry }: { entry: LogEntry }) {
   );
 }
 
-function ConvItem({ conv, active, editing, editValue, onEditChange, onEditSave, onStartEdit, onClick, onContinue, onDelete }: {
+function ConvItem({
+  conv,
+  active,
+  editing,
+  editValue,
+  onEditChange,
+  onEditSave,
+  onStartEdit,
+  onClick,
+  onContinue,
+  onDelete,
+}: {
   conv: ConversationSummary;
   active: boolean;
   editing: boolean;
@@ -542,7 +683,9 @@ function ConvItem({ conv, active, editing, editValue, onEditChange, onEditSave, 
   onDelete: () => void;
 }) {
   return (
-    <div className={`px-4 py-3 border-b border-surface-3/50 hover:bg-surface-2/50 transition-colors ${active ? "bg-accent/5 border-l-2 border-l-accent" : ""}`}>
+    <div
+      className={`px-4 py-3 border-b border-surface-3/50 hover:bg-surface-2/50 transition-colors ${active ? "bg-accent/5 border-l-2 border-l-accent" : ""}`}
+    >
       {editing ? (
         <input
           value={editValue}
@@ -555,12 +698,27 @@ function ConvItem({ conv, active, editing, editValue, onEditChange, onEditSave, 
       ) : (
         <>
           <div className="flex items-center justify-between gap-2">
-            <button onClick={onClick} className="text-sm font-medium text-gray-200 hover:text-white truncate text-left flex-1">
+            <button
+              onClick={onClick}
+              className="text-sm font-medium text-gray-200 hover:text-white truncate text-left flex-1"
+            >
               {conv.topic || "Nowa konwersacja"}
             </button>
             <div className="flex items-center gap-1 shrink-0">
-              <button onClick={onStartEdit} className="text-gray-600 hover:text-gray-300 text-xs p-0.5" title="Edytuj temat">✏️</button>
-              <button onClick={onDelete} className="text-gray-600 hover:text-red-400 text-xs p-0.5" title="Usuń">🗑</button>
+              <button
+                onClick={onStartEdit}
+                className="text-gray-600 hover:text-gray-300 text-xs p-0.5"
+                title="Edytuj temat"
+              >
+                ✏️
+              </button>
+              <button
+                onClick={onDelete}
+                className="text-gray-600 hover:text-red-400 text-xs p-0.5"
+                title="Usuń"
+              >
+                🗑
+              </button>
             </div>
           </div>
 
@@ -574,10 +732,18 @@ function ConvItem({ conv, active, editing, editValue, onEditChange, onEditSave, 
           <div className="flex items-center justify-between mt-1.5">
             <div className="flex items-center gap-3 text-[10px] font-mono text-gray-600">
               <span>{conv.messageCount} wiad.</span>
-              <span>{(conv.totalInputTokens + conv.totalOutputTokens).toLocaleString()} tok</span>
+              <span>
+                {(
+                  conv.totalInputTokens + conv.totalOutputTokens
+                ).toLocaleString()}{" "}
+                tok
+              </span>
               <span>${conv.totalCostUsd.toFixed(4)}</span>
             </div>
-            <button onClick={onContinue} className="text-[10px] text-accent hover:text-accent-glow font-medium">
+            <button
+              onClick={onContinue}
+              className="text-[10px] text-accent hover:text-accent-glow font-medium"
+            >
               Kontynuuj ▶
             </button>
           </div>
@@ -587,16 +753,30 @@ function ConvItem({ conv, active, editing, editValue, onEditChange, onEditSave, 
   );
 }
 
-function SearchResults({ results, onOpenConv }: { results: SearchResult; onOpenConv: (id: string) => void }) {
+function SearchResults({
+  results,
+  onOpenConv,
+}: {
+  results: SearchResult;
+  onOpenConv: (id: string) => void;
+}) {
   return (
     <div className="p-3 space-y-4">
       {results.conversationResults.length > 0 && (
         <div>
-          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Konwersacje ({results.conversationResults.length})</h3>
+          <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            Konwersacje ({results.conversationResults.length})
+          </h3>
           {results.conversationResults.map((c) => (
-            <button key={c.id} onClick={() => onOpenConv(c.id)} className="w-full text-left px-3 py-2 rounded-lg bg-surface-2 hover:bg-surface-3 mb-1.5 transition-colors">
+            <button
+              key={c.id}
+              onClick={() => onOpenConv(c.id)}
+              className="w-full text-left px-3 py-2 rounded-lg bg-surface-2 hover:bg-surface-3 mb-1.5 transition-colors"
+            >
               <div className="text-sm text-gray-200">{c.topic}</div>
-              <div className="text-[10px] text-gray-500">{c.messageCount} wiad.</div>
+              <div className="text-[10px] text-gray-500">
+                {c.messageCount} wiad.
+              </div>
             </button>
           ))}
         </div>
@@ -607,8 +787,14 @@ function SearchResults({ results, onOpenConv }: { results: SearchResult; onOpenC
           Wiadomości ({results.messageResults.pagination.total})
         </h3>
         {results.messageResults.messages.map((m) => (
-          <button key={m.id} onClick={() => onOpenConv(m.conversationId)} className="w-full text-left px-3 py-2 rounded-lg bg-surface-2 hover:bg-surface-3 mb-1.5 transition-colors">
-            <div className="text-[10px] text-accent font-medium">{m.conversationTopic}</div>
+          <button
+            key={m.id}
+            onClick={() => onOpenConv(m.conversationId)}
+            className="w-full text-left px-3 py-2 rounded-lg bg-surface-2 hover:bg-surface-3 mb-1.5 transition-colors"
+          >
+            <div className="text-[10px] text-accent font-medium">
+              {m.conversationTopic}
+            </div>
             <div className="text-xs text-gray-400 mt-0.5 line-clamp-2">
               {m.role === "user" ? "🗣️ " : "🤖 "}
               {m.matchContext}
@@ -623,7 +809,12 @@ function SearchResults({ results, onOpenConv }: { results: SearchResult; onOpenC
   );
 }
 
-function DetailView({ conv, search, onSearchChange, onContinue }: {
+function DetailView({
+  conv,
+  search,
+  onSearchChange,
+  onContinue,
+}: {
   conv: ConversationDetail;
   search: string;
   onSearchChange: (v: string) => void;
@@ -639,7 +830,10 @@ function DetailView({ conv, search, onSearchChange, onContinue }: {
           <span>${conv.stats.totalCostUsd.toFixed(4)}</span>
           <span>{new Date(conv.createdAt).toLocaleDateString("pl-PL")}</span>
         </div>
-        <button onClick={onContinue} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors">
+        <button
+          onClick={onContinue}
+          className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+        >
           Kontynuuj ▶
         </button>
       </div>
@@ -661,7 +855,9 @@ function DetailView({ conv, search, onSearchChange, onContinue }: {
             <DetailBubble key={m.id} msg={m} />
           ))}
           {conv.messages.length === 0 && (
-            <p className="text-sm text-gray-600 text-center py-10">Brak wyników</p>
+            <p className="text-sm text-gray-600 text-center py-10">
+              Brak wyników
+            </p>
           )}
         </div>
       </div>
@@ -683,21 +879,44 @@ function DetailBubble({ msg }: { msg: Message }) {
             : "bg-surface-2 text-gray-200 rounded-bl-md border border-surface-3 cursor-pointer"
         }`}
       >
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+          {msg.content}
+        </p>
 
         {open && !isUser && (
           <div className="mt-2 pt-2 border-t border-surface-4 text-[10px] font-mono text-gray-500 space-y-0.5">
-            {msg.inputTokens != null && <div>In: {msg.inputTokens} | Out: {msg.outputTokens} | Σ: {msg.totalTokens}</div>}
-            {msg.costUsd != null && <div>${msg.costUsd.toFixed(5)} | {msg.latencyMs}ms | {msg.model}</div>}
-            {msg.thinking && <div className="text-yellow-500/70">💭 {msg.thinking}</div>}
-            {msg.actions && Array.isArray(msg.actions) && msg.actions.length > 0 && (
-              <div>Akcje: {(msg.actions as any[]).map((a: any) => `${a.action}(${a.status})`).join(", ")}</div>
+            {msg.inputTokens != null && (
+              <div>
+                In: {msg.inputTokens} | Out: {msg.outputTokens} | Σ:{" "}
+                {msg.totalTokens}
+              </div>
             )}
+            {msg.costUsd != null && (
+              <div>
+                ${msg.costUsd.toFixed(5)} | {msg.latencyMs}ms | {msg.model}
+              </div>
+            )}
+            {msg.thinking && (
+              <div className="text-yellow-500/70">💭 {msg.thinking}</div>
+            )}
+            {msg.actions &&
+              Array.isArray(msg.actions) &&
+              msg.actions.length > 0 && (
+                <div>
+                  Akcje:{" "}
+                  {(msg.actions as any[])
+                    .map((a: any) => `${a.action}(${a.status})`)
+                    .join(", ")}
+                </div>
+              )}
           </div>
         )}
 
         <div className="text-[10px] text-gray-600 text-right mt-1">
-          {new Date(msg.createdAt).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}
+          {new Date(msg.createdAt).toLocaleTimeString("pl-PL", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
           {msg.costUsd != null && ` · $${msg.costUsd.toFixed(5)}`}
         </div>
       </div>
