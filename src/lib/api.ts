@@ -1,28 +1,43 @@
 const API = "https://voice.torweb.pl";
+const TOKEN_KEY = "smart-omni-token";
 
-export const getToken = (): string =>
-  (typeof localStorage !== "undefined" && localStorage.getItem("omni_token")) ||
-  "";
-export const setToken = (t: string) => localStorage.setItem("omni_token", t);
-export const clearToken = () => localStorage.removeItem("omni_token");
+// ── Auth ──
 
-const h = () => ({
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${getToken()}`,
-});
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
 
-export async function login(username: string, password: string): Promise<void> {
-  const r = await fetch(`${API}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+export function setToken(token: string) {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export async function login(password: string): Promise<boolean> {
+  // Token = VOICE_API_TOKEN — user wpisuje go jako hasło
+  const res = await fetch(`${API}/api/models`, {
+    headers: { Authorization: `Bearer ${password}` },
   });
-  if (!r.ok) throw new Error("Nieprawidłowe dane logowania");
-  const { token } = await r.json();
-  setToken(token);
+  if (res.ok) {
+    setToken(password);
+    return true;
+  }
+  return false;
+}
+
+function h() {
+  const token = getToken();
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
 }
 
 // ── Types ──
+
+export type ModelId = "claude-haiku-4-5" | "claude-sonnet-4-6";
 
 export interface VoiceAction {
   action: string;
@@ -41,6 +56,12 @@ export interface Stats {
   latencyMs: number;
 }
 
+export interface Source {
+  index: number;
+  title: string;
+  url: string;
+}
+
 export interface VoiceResponse {
   response: string;
   actions: VoiceAction[];
@@ -50,6 +71,10 @@ export interface VoiceResponse {
   messageId: string;
   isNewConversation: boolean;
   stats: Stats;
+  sources: Source[];
+  researchStatus: string[];
+  didResearch: boolean;
+  error?: string;
 }
 
 export interface ConversationSummary {
@@ -125,64 +150,104 @@ export interface GlobalStats {
   totalCostPln: string;
 }
 
-// ── Endpoints ──
+// ── Voice (non-streaming) ──
 
 export async function sendVoice(
   text: string,
   conversationId?: string,
+  model: ModelId = "claude-haiku-4-5",
 ): Promise<VoiceResponse> {
   const r = await fetch(`${API}/api/voice`, {
     method: "POST",
     headers: h(),
-    body: JSON.stringify({ text, conversationId }),
+    body: JSON.stringify({ text, conversationId, model, stream: false }),
   });
   if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
   return r.json();
 }
 
-export async function getConversations(
-  page = 1,
-  search?: string,
-): Promise<{ conversations: ConversationSummary[]; pagination: any }> {
+// ── Voice (streaming NDJSON via XHR) ──
+
+export function sendVoiceStreaming(
+  text: string,
+  conversationId: string | undefined,
+  model: ModelId,
+  onStatus: (msg: string) => void,
+): Promise<VoiceResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API}/api/voice`);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("Authorization", `Bearer ${getToken()}`);
+
+    let lastIndex = 0;
+
+    xhr.onprogress = () => {
+      const newChunk = xhr.responseText.substring(lastIndex);
+      lastIndex = xhr.responseText.length;
+
+      const lines = newChunk.split("\n").filter(Boolean);
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "status" && event.message) {
+            onStatus(event.message);
+          }
+        } catch {}
+      }
+    };
+
+    xhr.onload = () => {
+      const lines = xhr.responseText.split("\n").filter(Boolean);
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "result") {
+            resolve(event as unknown as VoiceResponse);
+            return;
+          }
+        } catch {}
+      }
+      reject(new Error("No result in stream"));
+    };
+
+    xhr.onerror = () => reject(new Error("Network error"));
+    xhr.ontimeout = () => reject(new Error("Timeout"));
+    xhr.timeout = 120000;
+
+    xhr.send(JSON.stringify({ text, conversationId, model, stream: true }));
+  });
+}
+
+// ── Conversations ──
+
+export async function getConversations(page = 1, search?: string) {
   const p = new URLSearchParams({ page: String(page), limit: "20" });
   if (search) p.set("search", search);
   const r = await fetch(`${API}/api/conversations?${p}`, { headers: h() });
   if (!r.ok) throw new Error(`${r.status}`);
-  return r.json();
+  return r.json() as Promise<{ conversations: ConversationSummary[]; pagination: any }>;
 }
 
-export async function getConversation(
-  id: string,
-  search?: string,
-): Promise<ConversationDetail> {
+export async function getConversation(id: string, search?: string): Promise<ConversationDetail> {
   const q = search ? `?search=${encodeURIComponent(search)}` : "";
   const r = await fetch(`${API}/api/conversations/${id}${q}`, { headers: h() });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
 
-export async function updateTopic(id: string, topic: string): Promise<void> {
-  await fetch(`${API}/api/conversations/${id}`, {
-    method: "PUT",
-    headers: h(),
-    body: JSON.stringify({ topic }),
-  });
+export async function updateTopic(id: string, topic: string) {
+  await fetch(`${API}/api/conversations/${id}`, { method: "PUT", headers: h(), body: JSON.stringify({ topic }) });
 }
 
-export async function deleteConversation(id: string): Promise<void> {
-  await fetch(`${API}/api/conversations/${id}`, {
-    method: "DELETE",
-    headers: h(),
-  });
+export async function deleteConversation(id: string) {
+  await fetch(`${API}/api/conversations/${id}`, { method: "DELETE", headers: h() });
 }
+
+// ── Search & Stats ──
 
 export async function globalSearch(q: string): Promise<SearchResult> {
-  const r = await fetch(
-    `${API}/api/search?q=${encodeURIComponent(q)}&limit=20`,
-    {
-      headers: h(),
-    },
-  );
+  const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}&limit=20`, { headers: h() });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }

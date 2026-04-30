@@ -1,11 +1,19 @@
-// Web Speech API — darmowy STT/TTS w przeglądarce
-
 const SR = typeof window !== "undefined"
   ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
   : null;
 
 export const sttAvailable = !!SR;
 export const ttsAvailable = typeof window !== "undefined" && "speechSynthesis" in window;
+
+function cleanForTTS(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")   // **bold** → bold
+    .replace(/\*(.+?)\*/g, "$1")        // *italic* → italic
+    .replace(/#{1,6}\s/g, "")           // ### heading → heading
+    .replace(/\[(\d+)\]/g, "")          // [1] [2] → usunięte
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
 
 export function createRecognizer(opts: {
   onResult: (text: string) => void;
@@ -41,7 +49,7 @@ export function speak(text: string): Promise<void> {
   return new Promise((resolve) => {
     if (!ttsAvailable) { resolve(); return; }
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+    const u = new SpeechSynthesisUtterance(cleanForTTS(text));
     u.lang = "pl-PL";
     u.rate = 1.05;
     u.onend = () => resolve();
