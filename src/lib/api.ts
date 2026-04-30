@@ -171,55 +171,59 @@ export async function sendVoice(
 
 // ── Voice (streaming NDJSON via XHR) ──
 
-export function sendVoiceStreaming(
+export async function sendVoiceStreaming(
   text: string,
   conversationId: string | undefined,
   model: ModelId,
   onStatus: (msg: string) => void,
 ): Promise<VoiceResponse> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API}/api/voice`);
-    xhr.setRequestHeader("Content-Type", "application/json");
-    xhr.setRequestHeader("Authorization", `Bearer ${getToken()}`);
-
-    let lastIndex = 0;
-
-    xhr.onprogress = () => {
-      const newChunk = xhr.responseText.substring(lastIndex);
-      lastIndex = xhr.responseText.length;
-
-      const lines = newChunk.split("\n").filter(Boolean);
-      for (const line of lines) {
-        try {
-          const event = JSON.parse(line);
-          if (event.type === "status" && event.message) {
-            onStatus(event.message);
-          }
-        } catch {}
-      }
-    };
-
-    xhr.onload = () => {
-      const lines = xhr.responseText.split("\n").filter(Boolean);
-      for (const line of lines) {
-        try {
-          const event = JSON.parse(line);
-          if (event.type === "result") {
-            resolve(event as unknown as VoiceResponse);
-            return;
-          }
-        } catch {}
-      }
-      reject(new Error("No result in stream"));
-    };
-
-    xhr.onerror = () => reject(new Error("Network error"));
-    xhr.ontimeout = () => reject(new Error("Timeout"));
-    xhr.timeout = 120000;
-
-    xhr.send(JSON.stringify({ text, conversationId, model, stream: true }));
+  const res = await fetch(`${API}/api/voice`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getToken()}`,
+    },
+    body: JSON.stringify({ text, conversationId, model, stream: true }),
   });
+
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("No readable stream");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult: VoiceResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (event.type === "status" && event.message) onStatus(event.message);
+        else if (event.type === "result")
+          finalResult = event as unknown as VoiceResponse;
+      } catch {}
+    }
+  }
+
+  if (buffer.trim()) {
+    try {
+      const event = JSON.parse(buffer);
+      if (event.type === "result")
+        finalResult = event as unknown as VoiceResponse;
+    } catch {}
+  }
+
+  if (!finalResult) throw new Error("No result received");
+  return finalResult;
 }
 
 // ── Conversations ──
