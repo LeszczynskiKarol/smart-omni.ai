@@ -53,7 +53,7 @@ jobs:
             npm run build
 
             echo "=== Nginx reload ==="
-            sudo systemctl reload nginx
+            sudo nginx -s reload || true
 
             echo "=== Done ==="
             ls -la dist/

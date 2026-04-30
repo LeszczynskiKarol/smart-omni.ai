@@ -4,14 +4,17 @@ const TOKEN_KEY = "smart-omni-token";
 // ── Auth ──
 
 export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
   return localStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string) {
+  if (typeof window === "undefined") return;
   localStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken() {
+  if (typeof window === "undefined") return;
   localStorage.removeItem(TOKEN_KEY);
 }
 
@@ -226,10 +229,16 @@ export async function getConversations(page = 1, search?: string) {
   if (search) p.set("search", search);
   const r = await fetch(`${API}/api/conversations?${p}`, { headers: h() });
   if (!r.ok) throw new Error(`${r.status}`);
-  return r.json() as Promise<{ conversations: ConversationSummary[]; pagination: any }>;
+  return r.json() as Promise<{
+    conversations: ConversationSummary[];
+    pagination: any;
+  }>;
 }
 
-export async function getConversation(id: string, search?: string): Promise<ConversationDetail> {
+export async function getConversation(
+  id: string,
+  search?: string,
+): Promise<ConversationDetail> {
   const q = search ? `?search=${encodeURIComponent(search)}` : "";
   const r = await fetch(`${API}/api/conversations/${id}${q}`, { headers: h() });
   if (!r.ok) throw new Error(`${r.status}`);
@@ -237,17 +246,27 @@ export async function getConversation(id: string, search?: string): Promise<Conv
 }
 
 export async function updateTopic(id: string, topic: string) {
-  await fetch(`${API}/api/conversations/${id}`, { method: "PUT", headers: h(), body: JSON.stringify({ topic }) });
+  await fetch(`${API}/api/conversations/${id}`, {
+    method: "PUT",
+    headers: h(),
+    body: JSON.stringify({ topic }),
+  });
 }
 
 export async function deleteConversation(id: string) {
-  await fetch(`${API}/api/conversations/${id}`, { method: "DELETE", headers: h() });
+  await fetch(`${API}/api/conversations/${id}`, {
+    method: "DELETE",
+    headers: h(),
+  });
 }
 
 // ── Search & Stats ──
 
 export async function globalSearch(q: string): Promise<SearchResult> {
-  const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}&limit=20`, { headers: h() });
+  const r = await fetch(
+    `${API}/api/search?q=${encodeURIComponent(q)}&limit=20`,
+    { headers: h() },
+  );
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
