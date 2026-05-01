@@ -25,6 +25,8 @@ import {
   type GlobalStats,
   type Stats,
   type Message,
+  uploadFiles,
+  type ProcessedFile,
 } from "../lib/api";
 import {
   createRecognizer,
@@ -33,6 +35,7 @@ import {
   sttAvailable,
   ttsAvailable,
 } from "../lib/speech";
+import CodeBlock, { InlineCode } from "./CodeBlock";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
@@ -54,6 +57,15 @@ interface LogEntry {
   actions?: VoiceResponse["actions"];
   sources?: Source[];
   didResearch?: boolean;
+  thinking?: string;
+  attachedFiles?: {
+    filename: string;
+    mimeType: string;
+    s3Key: string;
+    size: number;
+    processingMethod: string;
+    previewUrl?: string;
+  }[];
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -62,7 +74,7 @@ interface LogEntry {
 
 function renderInline(text: string, sources?: Source[]): ReactNode[] {
   const parts: ReactNode[] = [];
-  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|\[(\d+)\])/g;
+  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|\[(\d+)\]|`([^`]+)`)/g;
   let last = 0;
   let m;
   let i = 0;
@@ -100,6 +112,8 @@ function renderInline(text: string, sources?: Source[]): ReactNode[] {
           {m[4]}
         </a>,
       );
+    } else if (m[5]) {
+      parts.push(<InlineCode key={`c${i++}`}>{m[5]}</InlineCode>);
     }
     last = m.index + m[0].length;
   }
@@ -115,55 +129,128 @@ function RenderedMarkdown({
   text: string;
   sources?: Source[];
 }) {
-  const lines = text.split("\n");
+  // Parse code blocks first, then render text segments with inline markdown
+  const segments = parseCodeBlocks(text);
+
   return (
     <div className="space-y-1">
-      {lines.map((line, li) => {
-        const h3 = line.match(/^###\s+(.+)/);
-        const h2 = !h3 && line.match(/^##\s+(.+)/);
-        const h1 = !h2 && !h3 && line.match(/^#\s+(.+)/);
-        const bullet = line.match(/^[-•]\s+(.+)/);
-        const numbered = line.match(/^(\d+)\.\s+(.+)/);
+      {segments.map((seg, si) => {
+        if (seg.type === "code") {
+          return (
+            <CodeBlock
+              key={si}
+              code={seg.content}
+              language={seg.language}
+              filename={seg.filename}
+            />
+          );
+        }
+        // Text segment — render line by line
+        const lines = seg.content.split("\n");
+        return (
+          <div key={si} className="space-y-1">
+            {lines.map((line, li) => {
+              const h3 = line.match(/^###\s+(.+)/);
+              const h2 = !h3 && line.match(/^##\s+(.+)/);
+              const h1 = !h2 && !h3 && line.match(/^#\s+(.+)/);
+              const bullet = line.match(/^[-•]\s+(.+)/);
+              const numbered = line.match(/^(\d+)\.\s+(.+)/);
 
-        if (h3)
-          return (
-            <h4 key={li} className="text-sm font-semibold text-gray-200 mt-2">
-              {renderInline(h3[1], sources)}
-            </h4>
-          );
-        if (h2)
-          return (
-            <h3 key={li} className="text-[15px] font-bold text-gray-100 mt-3">
-              {renderInline(h2[1], sources)}
-            </h3>
-          );
-        if (h1)
-          return (
-            <h2 key={li} className="text-base font-bold text-white mt-3">
-              {renderInline(h1[1], sources)}
-            </h2>
-          );
-        if (bullet)
-          return (
-            <div key={li} className="flex gap-2 pl-2">
-              <span className="text-accent/50 shrink-0">•</span>
-              <span>{renderInline(bullet[1], sources)}</span>
-            </div>
-          );
-        if (numbered)
-          return (
-            <div key={li} className="flex gap-2 pl-1">
-              <span className="text-gray-500 shrink-0 font-mono text-xs w-4 text-right">
-                {numbered[1]}.
-              </span>
-              <span>{renderInline(numbered[2], sources)}</span>
-            </div>
-          );
-        if (!line.trim()) return <div key={li} className="h-1" />;
-        return <p key={li}>{renderInline(line, sources)}</p>;
+              if (h3)
+                return (
+                  <h4
+                    key={li}
+                    className="text-sm font-semibold text-gray-200 mt-2"
+                  >
+                    {renderInline(h3[1], sources)}
+                  </h4>
+                );
+              if (h2)
+                return (
+                  <h3
+                    key={li}
+                    className="text-[15px] font-bold text-gray-100 mt-3"
+                  >
+                    {renderInline(h2[1], sources)}
+                  </h3>
+                );
+              if (h1)
+                return (
+                  <h2 key={li} className="text-base font-bold text-white mt-3">
+                    {renderInline(h1[1], sources)}
+                  </h2>
+                );
+              if (bullet)
+                return (
+                  <div key={li} className="flex gap-2 pl-2">
+                    <span className="text-accent/50 shrink-0">•</span>
+                    <span>{renderInline(bullet[1], sources)}</span>
+                  </div>
+                );
+              if (numbered)
+                return (
+                  <div key={li} className="flex gap-2 pl-1">
+                    <span className="text-gray-500 shrink-0 font-mono text-xs w-4 text-right">
+                      {numbered[1]}.
+                    </span>
+                    <span>{renderInline(numbered[2], sources)}</span>
+                  </div>
+                );
+              if (!line.trim()) return <div key={li} className="h-1" />;
+              return <p key={li}>{renderInline(line, sources)}</p>;
+            })}
+          </div>
+        );
       })}
     </div>
   );
+}
+
+// Parse text into segments: text blocks and code blocks
+function parseCodeBlocks(text: string): {
+  type: "text" | "code";
+  content: string;
+  language?: string;
+  filename?: string;
+}[] {
+  const segments: {
+    type: "text" | "code";
+    content: string;
+    language?: string;
+    filename?: string;
+  }[] = [];
+  const re = /```(\w*)?(?:\s+(\S+))?\n([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = re.exec(text)) !== null) {
+    // Text before code block
+    if (match.index > lastIndex) {
+      const textBefore = text.slice(lastIndex, match.index).trim();
+      if (textBefore) segments.push({ type: "text", content: textBefore });
+    }
+
+    // Code block
+    const language = match[1] || undefined;
+    const filename = match[2] || undefined;
+    const code = match[3].replace(/\n$/, ""); // trim trailing newline
+    segments.push({ type: "code", content: code, language, filename });
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Remaining text after last code block
+  if (lastIndex < text.length) {
+    const remaining = text.slice(lastIndex).trim();
+    if (remaining) segments.push({ type: "text", content: remaining });
+  }
+
+  // If no code blocks found, return as single text segment
+  if (segments.length === 0) {
+    segments.push({ type: "text", content: text });
+  }
+
+  return segments;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -191,7 +278,10 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
 
   const [state, setState] = useState<AppState>("idle");
   const [model, setModel] = useState<ModelId>("claude-haiku-4-5");
-  const [convId, setConvId] = useState<string | null>(null);
+  const [convId, setConvId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("conv");
+  });
   const [log, setLog] = useState<LogEntry[]>([]);
   const [input, setInput] = useState("");
   const [transcript, setTranscript] = useState("");
@@ -203,10 +293,18 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
   const [stats, setGlobalStats] = useState<GlobalStats | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [filePreviews, setFilePreviews] = useState<Map<string, string>>(
+    new Map(),
+  );
+  const [dragOver, setDragOver] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recRef = useRef<any>(null);
+  const processingRef = useRef(false);
 
   const refreshSidebar = useCallback(async () => {
     try {
@@ -216,9 +314,56 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
     } catch {}
   }, []);
 
+  // ── File handling ──
+  const addFiles = (files: File[]) => {
+    const valid = files.filter((f) => f.size <= 20 * 1024 * 1024);
+    setPendingFiles((prev) => [...prev, ...valid].slice(0, 5));
+    // Generate previews for images
+    valid.forEach((f) => {
+      if (f.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = () =>
+          setFilePreviews((prev) =>
+            new Map(prev).set(f.name, reader.result as string),
+          );
+        reader.readAsDataURL(f);
+      }
+    });
+  };
+
+  const removeFile = (index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    addFiles(Array.from(e.dataTransfer.files));
+  };
+
   useEffect(() => {
     refreshSidebar();
   }, []);
+
+  // Sync convId ↔ URL
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (convId) {
+      url.searchParams.set("conv", convId);
+    } else {
+      url.searchParams.delete("conv");
+    }
+    window.history.replaceState({}, "", url.toString());
+  }, [convId]);
+
+  // Load conversation from URL on mount
+  useEffect(() => {
+    if (convId && log.length === 0) {
+      continueConv(convId);
+    }
+  }, []);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [log.length, liveStatus]);
@@ -265,6 +410,7 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
     actions?: VoiceResponse["actions"],
     sources?: Source[],
     didResearch?: boolean,
+    attachedFiles?: LogEntry["attachedFiles"],
   ) => {
     setLog((p) => [
       ...p,
@@ -277,6 +423,7 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
         actions,
         sources,
         didResearch,
+        attachedFiles,
       },
     ]);
   };
@@ -284,9 +431,51 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
   // ── Process text with streaming ──
 
   const processText = async (text: string) => {
-    if (!text.trim() || state === "processing" || state === "researching")
-      return;
-    addLog("user", text);
+    if (!text.trim() || processingRef.current) return;
+    processingRef.current = true;
+
+    // Upload plików jeśli są
+    let attachments: ProcessedFile[] | undefined;
+    if (pendingFiles.length > 0) {
+      setUploadingFiles(true);
+      try {
+        const result = await uploadFiles(pendingFiles);
+        attachments = result.files;
+        console.log(`📎 Uploaded ${attachments.length} files`);
+      } catch (err: any) {
+        addLog("error", `Błąd uploadu: ${err.message}`);
+        setUploadingFiles(false);
+        return;
+      }
+      setUploadingFiles(false);
+      setPendingFiles([]);
+      setFilePreviews(new Map());
+    }
+
+    // Log z info o plikach
+    const savedPreviews = new Map(filePreviews);
+    setUploadingFiles(false);
+
+    addLog(
+      "user",
+      text,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      attachments?.map((a) => ({
+        filename: a.filename,
+        mimeType: a.mimeType,
+        s3Key: a.s3Key,
+        size: a.size,
+        processingMethod: a.processingMethod,
+        previewUrl: savedPreviews.get(a.filename),
+      })),
+    );
+
+    setPendingFiles([]);
+    setFilePreviews(new Map());
+
     setState("researching");
     setLiveStatus("");
 
@@ -303,10 +492,11 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
             setLiveStatus(msg);
             statusMessages.push(msg);
           },
+          attachments,
         );
       } catch {
         setState("processing");
-        res = await sendVoice(text, convId || undefined, model);
+        res = await sendVoice(text, convId || undefined, model, attachments);
       }
 
       if (res.conversationId) setConvId(res.conversationId);
@@ -315,7 +505,7 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
         addLog("research-status", statusMessages.join("\n"));
       }
 
-      addLog(
+      const entry = addLog(
         "assistant",
         res.response,
         res.stats,
@@ -323,6 +513,14 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
         res.sources,
         res.didResearch,
       );
+      // Dodaj thinking do ostatniego wpisu
+      if (res.thinking) {
+        setLog((prev) =>
+          prev.map((e, i) =>
+            i === prev.length - 1 ? { ...e, thinking: res.thinking } : e,
+          ),
+        );
+      }
 
       for (const a of res.actions || []) {
         if (a.status === "success")
@@ -345,6 +543,8 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
       addLog("error", `Błąd: ${err.message}`);
       setState("idle");
       setLiveStatus("");
+    } finally {
+      processingRef.current = false;
     }
   };
 
@@ -403,6 +603,8 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
     setLog([]);
     setDetailConv(null);
     setLiveStatus("");
+    setPendingFiles([]);
+    setFilePreviews(new Map());
     inputRef.current?.focus();
   };
 
@@ -607,7 +809,30 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
         ) : (
           <>
             {/* Chat messages */}
-            <div className="flex-1 overflow-y-auto px-4 py-6">
+            <div
+              className="flex-1 overflow-y-auto px-4 py-6 relative"
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+            >
+              {/* Drop overlay */}
+              {dragOver && (
+                <div className="absolute inset-0 z-50 bg-accent/10 backdrop-blur-sm border-2 border-dashed border-accent/40 rounded-2xl flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="text-4xl mb-2">📎</div>
+                    <div className="text-accent font-medium">
+                      Upuść pliki tutaj
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      PDF, DOCX, obrazy, tekst · max 20MB
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="max-w-3xl mx-auto space-y-3">
                 {log.length === 0 && <EmptyState />}
                 {log.map((e) => (
@@ -640,7 +865,87 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
 
             {/* Input area */}
             <div className="shrink-0 border-t border-surface-3 bg-surface-1/50 backdrop-blur-sm">
+              {/* Pending files */}
+              {pendingFiles.length > 0 && (
+                <div className="max-w-3xl mx-auto px-4 pt-2 flex items-center gap-2 flex-wrap">
+                  {pendingFiles.map((f, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-1.5 bg-surface-2 border border-surface-4 rounded-lg px-2.5 py-1.5 group animate-fade-in"
+                    >
+                      {filePreviews.get(f.name) ? (
+                        <img
+                          src={filePreviews.get(f.name)}
+                          alt=""
+                          className="w-6 h-6 rounded object-cover"
+                        />
+                      ) : (
+                        <span className="text-sm">
+                          {f.type.includes("pdf")
+                            ? "📄"
+                            : f.type.includes("word") ||
+                                f.type.includes("document")
+                              ? "📝"
+                              : f.type.startsWith("image/")
+                                ? "🖼️"
+                                : "📃"}
+                        </span>
+                      )}
+                      <span className="text-xs text-gray-300 max-w-[120px] truncate">
+                        {f.name}
+                      </span>
+                      <span className="text-[9px] text-gray-600">
+                        {(f.size / 1024).toFixed(0)}KB
+                      </span>
+                      <button
+                        onClick={() => removeFile(i)}
+                        className="text-gray-600 hover:text-red-400 text-xs ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  {uploadingFiles && (
+                    <div className="flex items-center gap-2 text-xs text-accent animate-fade-in">
+                      <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                      Przesyłam...
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.docx,.doc,.txt,.csv,.md,.html,.json,.xml,.png,.jpg,.jpeg,.gif,.webp"
+                className="hidden"
+                onChange={(e) => {
+                  addFiles(Array.from(e.target.files || []));
+                  e.target.value = "";
+                }}
+              />
+
               <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+                {/* Attach button */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isProcessing}
+                  className={`relative shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 ${
+                    pendingFiles.length > 0
+                      ? "bg-accent/20 text-accent"
+                      : "bg-surface-3 text-gray-500 hover:bg-surface-4 hover:text-gray-300"
+                  } disabled:opacity-40`}
+                  title="Załącz plik"
+                >
+                  <span className="text-lg">📎</span>
+                  {pendingFiles.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent text-surface-0 text-[9px] font-bold rounded-full flex items-center justify-center">
+                      {pendingFiles.length}
+                    </span>
+                  )}
+                </button>
+
                 <button
                   onClick={toggleVoice}
                   disabled={isProcessing || !sttAvailable}
@@ -781,6 +1086,18 @@ function EmptyState() {
   );
 }
 
+const ACTION_LABELS: Record<string, string> = {
+  trello_create_card: "📋 Trello — nowa karta",
+  trello_move_card: "📋 Trello — przeniesienie karty",
+  gmail_send: "📧 Gmail — wysłanie emaila",
+  gmail_draft: "📧 Gmail — draft emaila",
+  calendar_create: "📅 Kalendarz — nowe wydarzenie",
+  calendar_list: "📅 Kalendarz — lista wydarzeń",
+  reminder: "⏰ Przypomnienie",
+  note: "📝 Notatka",
+  web_search: "🔍 Wyszukiwanie w internecie",
+};
+
 function ChatBubble({ entry }: { entry: LogEntry }) {
   const [showStats, setShowStats] = useState(false);
   const isUser = entry.type === "user";
@@ -815,17 +1132,21 @@ function ChatBubble({ entry }: { entry: LogEntry }) {
     );
   }
 
+  const usedActions =
+    entry.actions?.filter(
+      (a) => a.status === "success" || a.status === "error",
+    ) ?? [];
+
   return (
     <div
       className={`animate-slide-up flex ${isUser ? "justify-end" : "justify-start"}`}
     >
       <div
-        onClick={() => entry.stats && setShowStats(!showStats)}
         className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
           isUser
             ? "bg-accent/15 text-gray-100 rounded-br-md"
             : "bg-surface-2 text-gray-200 rounded-bl-md border border-surface-3"
-        } ${entry.stats ? "cursor-pointer" : ""}`}
+        }`}
       >
         {entry.didResearch && !isUser && (
           <div className="text-[10px] text-purple-400 font-medium mb-1">
@@ -833,7 +1154,107 @@ function ChatBubble({ entry }: { entry: LogEntry }) {
           </div>
         )}
 
+        {/* Thinking - collapsible */}
+        {entry.thinking && !isUser && <ThinkingBlock text={entry.thinking} />}
+
         <div className="text-sm leading-relaxed">
+          {/* Attached files */}
+          {entry.attachedFiles && entry.attachedFiles.length > 0 && (
+            <div className="space-y-2 mb-2">
+              {/* Image previews */}
+              {entry.attachedFiles.some((f) =>
+                f.mimeType.startsWith("image/"),
+              ) && (
+                <div className="flex flex-wrap gap-2">
+                  {entry.attachedFiles
+                    .filter((f) => f.mimeType.startsWith("image/"))
+                    .map((f, i) => (
+                      <button
+                        key={`img-${i}`}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const { getDownloadUrl } =
+                              await import("../lib/api");
+                            const url = await getDownloadUrl(f.s3Key);
+                            window.open(url, "_blank");
+                          } catch {
+                            alert("Plik niedostępny");
+                          }
+                        }}
+                        className="relative group rounded-lg overflow-hidden border border-surface-4 hover:border-accent/40 transition-colors"
+                        title={`${f.filename} — kliknij aby otworzyć`}
+                      >
+                        {f.previewUrl ? (
+                          <img
+                            src={f.previewUrl}
+                            alt={f.filename}
+                            className="w-32 h-32 object-cover"
+                          />
+                        ) : (
+                          <div className="w-32 h-32 bg-surface-3 flex items-center justify-center text-2xl">
+                            🖼️
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                          <span className="opacity-0 group-hover:opacity-100 text-white text-lg transition-opacity">
+                            ↗
+                          </span>
+                        </div>
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1.5 py-0.5 text-[9px] text-gray-300 truncate">
+                          {f.filename}
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              )}
+              {/* Non-image files */}
+              <div className="flex flex-wrap gap-1.5">
+                {entry.attachedFiles
+                  .filter((f) => !f.mimeType.startsWith("image/"))
+                  .map((f, i) => (
+                    <button
+                      key={`doc-${i}`}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const { getDownloadUrl } = await import("../lib/api");
+                          const url = await getDownloadUrl(f.s3Key);
+                          window.open(url, "_blank");
+                        } catch {
+                          alert("Plik niedostępny");
+                        }
+                      }}
+                      className="flex items-center gap-1.5 bg-surface-3/50 hover:bg-surface-3 rounded-lg px-2 py-1 text-[11px] transition-colors group cursor-pointer"
+                      title={`Kliknij aby pobrać: ${f.filename}`}
+                    >
+                      <span>
+                        {f.mimeType.includes("pdf")
+                          ? "📄"
+                          : f.mimeType.includes("word") ||
+                              f.mimeType.includes("document")
+                            ? "📝"
+                            : "📎"}
+                      </span>
+                      <span className="text-gray-300 max-w-[140px] truncate group-hover:text-white">
+                        {f.filename}
+                      </span>
+                      <span className="text-gray-600">
+                        {(f.size / 1024).toFixed(0)}KB
+                      </span>
+                      <span
+                        className={`text-[9px] px-1 rounded ${f.processingMethod === "scraper" ? "bg-blue-500/20 text-blue-400" : "bg-gray-500/20 text-gray-400"}`}
+                      >
+                        {f.processingMethod === "scraper" ? "📄" : "📃"}
+                      </span>
+                      <span className="text-gray-600 group-hover:text-accent text-[10px]">
+                        ↗
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
           <RenderedMarkdown text={entry.text} sources={entry.sources} />
         </div>
 
@@ -863,32 +1284,111 @@ function ChatBubble({ entry }: { entry: LogEntry }) {
           </div>
         )}
 
-        {showStats && entry.stats && (
-          <div className="mt-2 pt-2 border-t border-surface-4 text-[10px] font-mono text-gray-500 space-y-0.5">
-            <div>
-              {entry.stats.inputTokens} in + {entry.stats.outputTokens} out ={" "}
-              {entry.stats.totalTokens} tok
-            </div>
-            <div>
-              ${entry.stats.costUsd.toFixed(5)} · {entry.stats.latencyMs}ms ·{" "}
-              {entry.stats.model}
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center justify-end gap-2 mt-1">
-          <span className="text-[10px] text-gray-600">
-            {entry.time.toLocaleTimeString("pl-PL", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </span>
-          {entry.stats && (
-            <span className="text-[10px] font-mono text-gray-600">
-              ${entry.stats.costUsd.toFixed(5)}
+        {/* Bottom bar */}
+        <div className="flex items-center justify-between mt-2 gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-gray-600">
+              {entry.time.toLocaleTimeString("pl-PL", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
             </span>
+            {entry.stats && (
+              <span className="text-[10px] font-mono text-gray-600">
+                · ${entry.stats.costUsd.toFixed(5)}
+              </span>
+            )}
+          </div>
+
+          {/* Stats toggle — tylko dla wiadomości asystenta ze statystykami */}
+          {!isUser && entry.stats && (
+            <button
+              onClick={() => setShowStats(!showStats)}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-all duration-150 border ${
+                showStats
+                  ? "bg-surface-3 border-surface-4 text-gray-300"
+                  : "bg-transparent border-surface-4 text-gray-600 hover:text-gray-400 hover:border-gray-500"
+              }`}
+            >
+              <span>{showStats ? "▲" : "▼"}</span>
+              Stats
+            </button>
           )}
         </div>
+
+        {/* Stats panel */}
+        {showStats && entry.stats && (
+          <div className="mt-2 pt-2 border-t border-surface-4 space-y-2">
+            {/* Tokeny i koszt */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] font-mono">
+              <div className="text-gray-500">Model</div>
+              <div className="text-gray-300">{entry.stats.model}</div>
+
+              <div className="text-gray-500">Tokeny wejście</div>
+              <div className="text-gray-300">
+                {entry.stats.inputTokens.toLocaleString()}
+              </div>
+
+              <div className="text-gray-500">Tokeny wyjście</div>
+              <div className="text-gray-300">
+                {entry.stats.outputTokens.toLocaleString()}
+              </div>
+
+              <div className="text-gray-500">Razem tokenów</div>
+              <div className="text-gray-300">
+                {entry.stats.totalTokens.toLocaleString()}
+              </div>
+
+              <div className="text-gray-500">Koszt</div>
+              <div className="text-gray-300">
+                ${entry.stats.costUsd.toFixed(6)}
+              </div>
+
+              <div className="text-gray-500">Czas odpowiedzi</div>
+              <div className="text-gray-300">{entry.stats.latencyMs} ms</div>
+            </div>
+
+            {/* Użyte narzędzia/akcje */}
+            {usedActions.length > 0 && (
+              <div className="pt-1.5 border-t border-surface-4">
+                <div className="text-[10px] text-gray-500 font-medium mb-1">
+                  🛠 Użyte narzędzia
+                </div>
+                {usedActions.map((a, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2 text-[10px] py-0.5"
+                  >
+                    <span
+                      className={
+                        a.status === "success"
+                          ? "text-emerald-400"
+                          : "text-red-400"
+                      }
+                    >
+                      {a.status === "success" ? "✓" : "✗"}
+                    </span>
+                    <span className="text-gray-300">
+                      {ACTION_LABELS[a.action] ?? a.action}
+                    </span>
+                    {a.status === "error" && a.error && (
+                      <span className="text-red-400/70 truncate max-w-[160px]">
+                        {a.error}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Research */}
+            {entry.didResearch && (
+              <div className="pt-1.5 border-t border-surface-4 text-[10px] text-purple-400">
+                🔍 Odpowiedź wygenerowana z użyciem wyszukiwania
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1138,4 +1638,37 @@ function fmtTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
   return String(n);
+}
+
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(!open);
+        }}
+        className="flex items-center gap-1.5 text-[10px] text-yellow-500/70 hover:text-yellow-400 transition-colors"
+      >
+        <span
+          className={`transition-transform duration-200 ${open ? "rotate-90" : ""}`}
+        >
+          ▶
+        </span>
+        <span>💭 Tok rozumowania</span>
+        {!open && (
+          <span className="text-gray-600 truncate max-w-[200px]">
+            — {text.slice(0, 60)}...
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-1.5 pl-3 border-l-2 border-yellow-500/20 text-[11px] text-yellow-500/50 leading-relaxed animate-fade-in">
+          {text}
+        </div>
+      )}
+    </div>
+  );
 }

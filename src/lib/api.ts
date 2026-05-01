@@ -1,4 +1,6 @@
-const API = "https://voice.torweb.pl";
+const API = import.meta.env.DEV
+  ? "https://dev.torweb.pl"
+  : "https://voice.torweb.pl";
 const TOKEN_KEY = "smart-omni-token";
 
 // ── Auth ──
@@ -19,7 +21,6 @@ export function clearToken() {
 }
 
 export async function login(password: string): Promise<boolean> {
-  // Token = VOICE_API_TOKEN — user wpisuje go jako hasło
   const res = await fetch(`${API}/api/models`, {
     headers: { Authorization: `Bearer ${password}` },
   });
@@ -31,10 +32,9 @@ export async function login(password: string): Promise<boolean> {
 }
 
 function h() {
-  const token = getToken();
   return {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
+    Authorization: `Bearer ${getToken()}`,
   };
 }
 
@@ -49,7 +49,6 @@ export interface VoiceAction {
   result?: any;
   error?: string;
 }
-
 export interface Stats {
   inputTokens: number;
   outputTokens: number;
@@ -58,11 +57,20 @@ export interface Stats {
   model: string;
   latencyMs: number;
 }
-
 export interface Source {
   index: number;
   title: string;
   url: string;
+}
+
+export interface ProcessedFile {
+  s3Key: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  extractedText: string | null;
+  visionDescription: string | null;
+  processingMethod: string;
 }
 
 export interface VoiceResponse {
@@ -153,77 +161,104 @@ export interface GlobalStats {
   totalCostPln: string;
 }
 
+// ── File Upload ──
+
+export async function uploadFiles(
+  files: File[],
+): Promise<{ files: ProcessedFile[]; count: number }> {
+  const formData = new FormData();
+  files.forEach((f) => formData.append("files", f));
+
+  const res = await fetch(`${API}/api/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getToken()}` },
+    // No Content-Type — browser sets multipart boundary
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Upload failed: ${err}`);
+  }
+  return res.json();
+}
+
 // ── Voice (non-streaming) ──
 
 export async function sendVoice(
   text: string,
   conversationId?: string,
   model: ModelId = "claude-haiku-4-5",
+  attachments?: ProcessedFile[],
 ): Promise<VoiceResponse> {
   const r = await fetch(`${API}/api/voice`, {
     method: "POST",
     headers: h(),
-    body: JSON.stringify({ text, conversationId, model, stream: false }),
+    body: JSON.stringify({
+      text,
+      conversationId,
+      model,
+      stream: false,
+      attachments,
+    }),
   });
   if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
   return r.json();
 }
 
-// ── Voice (streaming NDJSON via XHR) ──
+// ── Voice (streaming) ──
 
-export async function sendVoiceStreaming(
+export function sendVoiceStreaming(
   text: string,
   conversationId: string | undefined,
   model: ModelId,
   onStatus: (msg: string) => void,
+  attachments?: ProcessedFile[],
 ): Promise<VoiceResponse> {
-  const res = await fetch(`${API}/api/voice`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${getToken()}`,
-    },
-    body: JSON.stringify({ text, conversationId, model, stream: true }),
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API}/api/voice`);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("Authorization", `Bearer ${getToken()}`);
+
+    let lastIndex = 0;
+    xhr.onprogress = () => {
+      const chunk = xhr.responseText.substring(lastIndex);
+      lastIndex = xhr.responseText.length;
+      for (const line of chunk.split("\n").filter(Boolean)) {
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === "status" && ev.message) onStatus(ev.message);
+        } catch {}
+      }
+    };
+
+    xhr.onload = () => {
+      for (const line of xhr.responseText.split("\n").filter(Boolean)) {
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === "result") {
+            resolve(ev as unknown as VoiceResponse);
+            return;
+          }
+        } catch {}
+      }
+      reject(new Error("No result in stream"));
+    };
+
+    xhr.onerror = () => reject(new Error("Network error"));
+    xhr.ontimeout = () => reject(new Error("Timeout"));
+    xhr.timeout = 120000;
+    xhr.send(
+      JSON.stringify({
+        text,
+        conversationId,
+        model,
+        stream: true,
+        attachments,
+      }),
+    );
   });
-
-  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-
-  const reader = res.body?.getReader();
-  if (!reader) throw new Error("No readable stream");
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalResult: VoiceResponse | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const event = JSON.parse(line);
-        if (event.type === "status" && event.message) onStatus(event.message);
-        else if (event.type === "result")
-          finalResult = event as unknown as VoiceResponse;
-      } catch {}
-    }
-  }
-
-  if (buffer.trim()) {
-    try {
-      const event = JSON.parse(buffer);
-      if (event.type === "result")
-        finalResult = event as unknown as VoiceResponse;
-    } catch {}
-  }
-
-  if (!finalResult) throw new Error("No result received");
-  return finalResult;
 }
 
 // ── Conversations ──
@@ -264,8 +299,6 @@ export async function deleteConversation(id: string) {
   });
 }
 
-// ── Search & Stats ──
-
 export async function globalSearch(q: string): Promise<SearchResult> {
   const r = await fetch(
     `${API}/api/search?q=${encodeURIComponent(q)}&limit=20`,
@@ -279,4 +312,14 @@ export async function getStats(): Promise<GlobalStats> {
   const r = await fetch(`${API}/api/stats`, { headers: h() });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
+}
+
+export async function getDownloadUrl(s3Key: string): Promise<string> {
+  const r = await fetch(
+    `${API}/api/download?key=${encodeURIComponent(s3Key)}`,
+    { headers: h() },
+  );
+  if (!r.ok) throw new Error(`${r.status}`);
+  const data = await r.json();
+  return data.url;
 }

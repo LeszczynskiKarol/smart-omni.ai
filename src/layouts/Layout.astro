@@ -23,4 +23,16 @@ const { title = "Smart Omni — AI Voice Assistant" } = Astro.props;
   * { scrollbar-width: thin; scrollbar-color: #232d3b transparent; }
   ::selection { background: rgba(6,182,212,0.3); }
   body { overflow: hidden; }
+  .tok-keyword { color: #c792ea; font-weight: 500; }
+  .tok-builtin { color: #82aaff; }
+  .tok-string { color: #c3e88d; }
+  .tok-number { color: #f78c6c; }
+  .tok-comment { color: #546e7a; font-style: italic; }
+  .tok-function { color: #ffcb6b; }
+  .tok-flag { color: #89ddff; }
+  .code-line:hover { background: rgba(255,255,255,0.03); }
+  .code-line:hover .code-line-num { color: rgba(255,255,255,0.25); }
+  .code-block pre::-webkit-scrollbar { height: 6px; }
+  .code-block pre::-webkit-scrollbar-track { background: transparent; }
+  .code-block pre::-webkit-scrollbar-thumb { background: #232d3b; border-radius: 3px; }
 </style>
