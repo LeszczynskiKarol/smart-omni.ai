@@ -222,6 +222,8 @@ export function sendVoiceStreaming(
     xhr.setRequestHeader("Authorization", `Bearer ${getToken()}`);
 
     let lastIndex = 0;
+    let resolved = false;
+
     xhr.onprogress = () => {
       const chunk = xhr.responseText.substring(lastIndex);
       lastIndex = xhr.responseText.length;
@@ -229,20 +231,27 @@ export function sendVoiceStreaming(
         try {
           const ev = JSON.parse(line);
           if (ev.type === "status" && ev.message) onStatus(ev.message);
+          if (ev.type === "result" && !resolved) {
+            resolved = true;
+            resolve(ev as unknown as VoiceResponse);
+          }
         } catch {}
       }
     };
 
     xhr.onload = () => {
-      for (const line of xhr.responseText.split("\n").filter(Boolean)) {
-        try {
-          const ev = JSON.parse(line);
-          if (ev.type === "result") {
-            resolve(ev as unknown as VoiceResponse);
-            return;
-          }
-        } catch {}
-      }
+      if (resolved) return;
+
+      // Non-streaming response (actions like gmail_send)
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (data.response !== undefined) {
+          resolved = true;
+          resolve(data as VoiceResponse);
+          return;
+        }
+      } catch {}
+
       reject(new Error("No result in stream"));
     };
 
