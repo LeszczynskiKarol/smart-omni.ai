@@ -1,3 +1,4 @@
+import { ActionBubble, ACTION_LABELS } from "./ActionBubble";
 import {
   useState,
   useEffect,
@@ -8,7 +9,6 @@ import {
 import LoginForm from "./LoginForm";
 import { getToken, clearToken } from "../lib/api";
 import {
-  sendVoice,
   sendVoiceStreaming,
   getConversations,
   getConversation,
@@ -74,7 +74,8 @@ interface LogEntry {
 
 function renderInline(text: string, sources?: Source[]): ReactNode[] {
   const parts: ReactNode[] = [];
-  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|\[(\d+)\]|`([^`]+)`)/g;
+  const re =
+    /(\*\*(.+?)\*\*|\*(.+?)\*|\[(\d+)\]|`([^`]+)`|(https?:\/\/[^\s]+))/g;
   let last = 0;
   let m;
   let i = 0;
@@ -114,7 +115,20 @@ function renderInline(text: string, sources?: Source[]): ReactNode[] {
       );
     } else if (m[5]) {
       parts.push(<InlineCode key={`c${i++}`}>{m[5]}</InlineCode>);
+    } else if (m[6]) {
+      parts.push(
+        <a
+          key={`url${i++}`}
+          href={m[6]}
+          target="_blank"
+          rel="noopener"
+          className="text-accent hover:underline break-all"
+        >
+          {m[6]}
+        </a>,
+      );
     }
+
     last = m.index + m[0].length;
   }
   if (last < text.length)
@@ -521,7 +535,7 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
         if (a.status === "success")
           addLog(
             "action",
-            `✅ ${a.action}: ${JSON.stringify({ ...a.params, ...a.result }).slice(0, 800)}`,
+            `✅ ${a.action}: ${JSON.stringify({ ...a.params, ...a.result }).slice(0, 5000)}`,
           );
         else if (a.status === "error")
           addLog("error", `❌ ${a.action}: ${a.error}`);
@@ -644,7 +658,7 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
               entries.push({
                 id: `a${entries.length}${Date.now().toString(36)}`,
                 type: "action",
-                text: `✅ ${a.action}: ${JSON.stringify({ ...a.params, ...a.result }).slice(0, 800)}`,
+                text: `✅ ${a.action}: ${JSON.stringify({ ...a.params, ...a.result }).slice(0, 5000)}`,
                 time: new Date(m.createdAt),
               });
             } else if (a.status === "error") {
@@ -1105,31 +1119,6 @@ function EmptyState() {
     </div>
   );
 }
-
-const ACTION_LABELS: Record<string, string> = {
-  trello_board: "📋 Trello — przegląd boardu",
-  trello_boards: "📋 Trello — lista boardów",
-  trello_list_cards: "📋 Trello — karty na liście",
-  trello_get_card: "📋 Trello — szczegóły karty",
-  trello_search: "🔍 Trello — wyszukiwanie",
-  trello_comment: "💬 Trello — komentarz",
-  trello_archive: "🗄️ Trello — archiwizacja",
-  gmail_search: "📧 Gmail — wyszukiwanie",
-  gmail_thread: "📧 Gmail — wątek",
-  gmail_trash: "🗑️ Gmail — kosz",
-  gmail_mark_read: "📧 Gmail — oznacz przeczytane",
-  gmail_star: "⭐ Gmail — gwiazdka",
-  gmail_labels: "🏷️ Gmail — etykiety",
-  trello_create_card: "📋 Trello — nowa karta",
-  trello_move_card: "📋 Trello — przeniesienie karty",
-  gmail_send: "📧 Gmail — wysłanie emaila",
-  gmail_draft: "📧 Gmail — draft emaila",
-  calendar_create: "📅 Kalendarz — nowe wydarzenie",
-  calendar_list: "📅 Kalendarz — lista wydarzeń",
-  reminder: "⏰ Przypomnienie",
-  note: "📝 Notatka",
-  web_search: "🔍 Wyszukiwanie w internecie",
-};
 
 function ChatBubble({ entry }: { entry: LogEntry }) {
   const [showStats, setShowStats] = useState(false);
@@ -1692,300 +1681,6 @@ function ThinkingBlock({ text }: { text: string }) {
           {text}
         </div>
       )}
-    </div>
-  );
-}
-
-function ActionBubble({
-  text,
-  type,
-}: {
-  type: "action" | "error";
-  text: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (type === "error") {
-    return (
-      <div className="animate-slide-up text-xs font-mono px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400">
-        {text}
-      </div>
-    );
-  }
-
-  const match = text.match(/^✅ ([\w_]+): (.+)$/s);
-  if (!match) {
-    return (
-      <div className="animate-slide-up text-xs font-mono px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
-        {text}
-      </div>
-    );
-  }
-
-  const actionName = match[1];
-  const label = ACTION_LABELS[actionName] ?? `⚙️ ${actionName}`;
-  let parsed: any = null;
-  try {
-    parsed = JSON.parse(match[2]);
-  } catch {}
-
-  // Dedykowane renderowanie dla różnych typów akcji
-  const renderDetails = () => {
-    if (!parsed)
-      return <div className="text-gray-400 font-mono">{match[2]}</div>;
-
-    if (
-      ["gmail_send", "gmail_draft", "gmail_reply", "gmail_forward"].includes(
-        actionName,
-      )
-    ) {
-      return (
-        <div className="space-y-1.5">
-          {parsed.to && <Row icon="→" label="Do" value={parsed.to} />}
-          {parsed.subject && (
-            <Row icon="📌" label="Temat" value={parsed.subject} />
-          )}
-          {parsed.body && <BodyPreview body={parsed.body} />}
-          {parsed.messageId && (
-            <Row icon="🆔" label="ID" value={parsed.messageId} mono />
-          )}
-        </div>
-      );
-    }
-
-    if (actionName === "gmail_profile") {
-      return (
-        <div className="space-y-1.5">
-          {parsed.email && <Row icon="📧" label="Konto" value={parsed.email} />}
-          {parsed.messagesTotal != null && (
-            <Row
-              icon="📨"
-              label="Wiadomości"
-              value={parsed.messagesTotal.toLocaleString()}
-            />
-          )}
-          {parsed.threadsTotal != null && (
-            <Row
-              icon="🧵"
-              label="Wątki"
-              value={parsed.threadsTotal.toLocaleString()}
-            />
-          )}
-        </div>
-      );
-    }
-
-    if (actionName === "trello_board") {
-      const board = parsed.board;
-      const lists: any[] = parsed.lists || [];
-      const totalCards = lists.reduce(
-        (sum: number, l: any) => sum + (l.cards?.length || 0),
-        0,
-      );
-      return (
-        <div className="space-y-2">
-          {board?.name && <Row icon="📋" label="Board" value={board.name} />}
-          {board?.url && (
-            <a
-              href={board.url}
-              target="_blank"
-              rel="noopener"
-              className="flex items-center gap-1 text-accent hover:underline text-[10px]"
-            >
-              ↗ Otwórz w Trello
-            </a>
-          )}
-          {board?.lastActivity && (
-            <Row
-              icon="🕐"
-              label="Aktywność"
-              value={new Date(board.lastActivity).toLocaleDateString("pl-PL")}
-            />
-          )}
-          <Row
-            icon="📊"
-            label="Listy"
-            value={`${lists.length} | ${totalCards} kart`}
-          />
-          {lists.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-emerald-500/15 space-y-2">
-              {lists.map((list: any) => (
-                <div key={list.id}>
-                  <div className="flex items-center gap-2 text-[11px] mb-1">
-                    <span className="text-emerald-400 font-medium">
-                      📋 {list.name}
-                    </span>
-                    <span className="text-gray-600">
-                      ({list.cards?.length || 0})
-                    </span>
-                  </div>
-                  {list.cards?.map((card: any) => (
-                    <div
-                      key={card.id}
-                      className="pl-3 border-l border-emerald-500/20 mb-1"
-                    >
-                      <a
-                        href={card.url}
-                        target="_blank"
-                        rel="noopener"
-                        className="text-[11px] text-gray-200 hover:text-accent hover:underline"
-                      >
-                        📝 {card.name}
-                      </a>
-                      {card.description && (
-                        <div className="text-[10px] text-gray-500 truncate">
-                          {card.description.slice(0, 80)}
-                          {card.description.length > 80 ? "…" : ""}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {(!list.cards || list.cards.length === 0) && (
-                    <div className="pl-3 text-[10px] text-gray-600 italic">
-                      pusta
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    if (actionName === "trello_create_card") {
-      return (
-        <div className="space-y-1.5">
-          {parsed.name && <Row icon="📋" label="Tytuł" value={parsed.name} />}
-          {parsed.url && (
-            <a
-              href={parsed.url}
-              target="_blank"
-              rel="noopener"
-              className="flex items-center gap-1 text-accent hover:underline text-[10px]"
-            >
-              ↗ Otwórz kartę
-            </a>
-          )}
-        </div>
-      );
-    }
-
-    if (actionName === "calendar_create") {
-      return (
-        <div className="space-y-1.5">
-          {parsed.summary && (
-            <Row icon="📅" label="Tytuł" value={parsed.summary} />
-          )}
-          {parsed.start?.dateTime && (
-            <Row
-              icon="🕐"
-              label="Start"
-              value={new Date(parsed.start.dateTime).toLocaleString("pl-PL")}
-            />
-          )}
-          {parsed.htmlLink && (
-            <a
-              href={parsed.htmlLink}
-              target="_blank"
-              rel="noopener"
-              className="flex items-center gap-1 text-accent hover:underline text-[10px]"
-            >
-              ↗ Otwórz w kalendarzu
-            </a>
-          )}
-        </div>
-      );
-    }
-
-    return (
-      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-        {Object.entries(parsed).map(([k, v]) => (
-          <div key={k} className="contents">
-            <span className="text-gray-500 font-mono">{k}</span>
-            <span className="text-gray-300 font-mono truncate">
-              {typeof v === "object" ? JSON.stringify(v) : String(v)}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  return (
-    <div className="animate-slide-up bg-emerald-500/8 border border-emerald-500/20 rounded-xl px-3 py-2 text-xs">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between gap-2 text-left"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-emerald-400 font-bold">✓</span>
-          <span className="text-emerald-300 font-medium">{label}</span>
-        </div>
-        <span className="text-gray-600 text-[10px]">
-          {expanded ? "▲" : "▼"}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="mt-2 pt-2 border-t border-emerald-500/15">
-          {renderDetails()}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Row({
-  icon,
-  label,
-  value,
-  mono = false,
-}: {
-  icon: string;
-  label: string;
-  value: string | number;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-start gap-2">
-      <span className="shrink-0">{icon}</span>
-      <span className="text-gray-500 shrink-0">{label}:</span>
-      <span
-        className={`text-gray-200 truncate ${mono ? "font-mono text-[10px]" : ""}`}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function BodyPreview({ body }: { body: string }) {
-  const [open, setOpen] = useState(false);
-  const preview = body.split("\n").find((l) => l.trim()) ?? body.slice(0, 60);
-  const hasMore = body.trim().length > preview.length + 5;
-
-  return (
-    <div className="mt-1.5 pt-1.5 border-t border-emerald-500/15">
-      <div className="text-gray-500 mb-1">✉️ Treść:</div>
-      <div className="text-gray-300 bg-surface-3/30 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed">
-        {open ? (
-          <span className="whitespace-pre-wrap">{body}</span>
-        ) : (
-          <span className="text-gray-400 italic">
-            {preview}
-            {hasMore ? "…" : ""}
-          </span>
-        )}
-        {hasMore && (
-          <button
-            onClick={() => setOpen(!open)}
-            className="ml-2 text-accent hover:text-accent/80 text-[10px] font-medium"
-          >
-            {open ? "zwiń" : "pokaż więcej"}
-          </button>
-        )}
-      </div>
     </div>
   );
 }
