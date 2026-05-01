@@ -483,21 +483,16 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
       let res: VoiceResponse;
       const statusMessages: string[] = [];
 
-      try {
-        res = await sendVoiceStreaming(
-          text,
-          convId || undefined,
-          model,
-          (msg) => {
-            setLiveStatus(msg);
-            statusMessages.push(msg);
-          },
-          attachments,
-        );
-      } catch {
-        setState("processing");
-        res = await sendVoice(text, convId || undefined, model, attachments);
-      }
+      res = await sendVoiceStreaming(
+        text,
+        convId || undefined,
+        model,
+        (msg) => {
+          setLiveStatus(msg);
+          statusMessages.push(msg);
+        },
+        attachments,
+      );
 
       if (res.conversationId) setConvId(res.conversationId);
 
@@ -1119,17 +1114,7 @@ function ChatBubble({ entry }: { entry: LogEntry }) {
   }
 
   if (entry.type === "action" || entry.type === "error") {
-    return (
-      <div
-        className={`animate-slide-up text-xs font-mono px-3 py-1.5 rounded-lg ${
-          entry.type === "error"
-            ? "bg-red-500/10 text-red-400"
-            : "bg-emerald-500/10 text-emerald-400"
-        }`}
-      >
-        {entry.text}
-      </div>
-    );
+    return <ActionBubble text={entry.text} type={entry.type} />;
   }
 
   const usedActions =
@@ -1667,6 +1652,85 @@ function ThinkingBlock({ text }: { text: string }) {
       {open && (
         <div className="mt-1.5 pl-3 border-l-2 border-yellow-500/20 text-[11px] text-yellow-500/50 leading-relaxed animate-fade-in">
           {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActionBubble({
+  text,
+  type,
+}: {
+  type: "action" | "error";
+  text: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (type === "error") {
+    return (
+      <div className="animate-slide-up text-xs font-mono px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400">
+        {text}
+      </div>
+    );
+  }
+
+  // Parse "✅ action_name: {json}"
+  const match = text.match(/^✅ ([\w_]+): (.+)$/s);
+  if (!match) {
+    return (
+      <div className="animate-slide-up text-xs font-mono px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
+        {text}
+      </div>
+    );
+  }
+
+  const actionName = match[1];
+  const label = ACTION_LABELS[actionName] ?? `⚙️ ${actionName}`;
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(match[2]);
+  } catch {}
+
+  const renderValue = (val: any): string => {
+    if (typeof val === "object" && val !== null) return JSON.stringify(val);
+    return String(val);
+  };
+
+  return (
+    <div className="animate-slide-up bg-emerald-500/8 border border-emerald-500/20 rounded-xl px-3 py-2 text-xs">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between gap-2 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-emerald-400 font-bold">✓</span>
+          <span className="text-emerald-300 font-medium">{label}</span>
+        </div>
+        <span className="text-gray-600 text-[10px]">
+          {expanded ? "▲" : "▼"}
+        </span>
+      </button>
+
+      {expanded && parsed && (
+        <div className="mt-2 pt-2 border-t border-emerald-500/15 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+          {Object.entries(parsed).map(([k, v]) => (
+            <div key={k} className="contents">
+              <span className="text-gray-500 font-mono">{k}</span>
+              <span
+                className="text-gray-300 font-mono truncate"
+                title={renderValue(v)}
+              >
+                {renderValue(v)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {expanded && !parsed && (
+        <div className="mt-2 pt-2 border-t border-emerald-500/15 text-gray-400 font-mono">
+          {match[2]}
         </div>
       )}
     </div>
