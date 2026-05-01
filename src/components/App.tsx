@@ -521,7 +521,7 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
         if (a.status === "success")
           addLog(
             "action",
-            `✅ ${a.action}: ${JSON.stringify(a.result).slice(0, 120)}`,
+            `✅ ${a.action}: ${JSON.stringify({ ...a.params, ...a.result }).slice(0, 800)}`,
           );
         else if (a.status === "error")
           addLog("error", `❌ ${a.action}: ${a.error}`);
@@ -615,12 +615,15 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
       const d = await getConversation(id);
       setConvId(d.id);
       setDetailConv(null);
-      setLog(
-        d.messages.map((m, i) => ({
-          id: `l${i}${Date.now().toString(36)}`,
+
+      const entries: LogEntry[] = [];
+      for (const m of d.messages) {
+        entries.push({
+          id: `l${entries.length}${Date.now().toString(36)}`,
           type: m.role as any,
           text: m.content,
           time: new Date(m.createdAt),
+          actions: m.actions as any,
           stats:
             m.inputTokens != null
               ? {
@@ -632,8 +635,30 @@ function AppMain({ onLogout }: { onLogout: () => void }) {
                   latencyMs: m.latencyMs!,
                 }
               : undefined,
-        })),
-      );
+        });
+
+        // Odtwórz wpisy akcji z pola actions wiadomości asystenta
+        if (m.role === "assistant" && Array.isArray(m.actions)) {
+          for (const a of m.actions as any[]) {
+            if (a.status === "success") {
+              entries.push({
+                id: `a${entries.length}${Date.now().toString(36)}`,
+                type: "action",
+                text: `✅ ${a.action}: ${JSON.stringify({ ...a.params, ...a.result }).slice(0, 800)}`,
+                time: new Date(m.createdAt),
+              });
+            } else if (a.status === "error") {
+              entries.push({
+                id: `e${entries.length}${Date.now().toString(36)}`,
+                type: "error",
+                text: `❌ ${a.action}: ${a.error}`,
+                time: new Date(m.createdAt),
+              });
+            }
+          }
+        }
+      }
+      setLog(entries);
     } catch {}
   };
 
@@ -1082,6 +1107,19 @@ function EmptyState() {
 }
 
 const ACTION_LABELS: Record<string, string> = {
+  trello_board: "📋 Trello — przegląd boardu",
+  trello_boards: "📋 Trello — lista boardów",
+  trello_list_cards: "📋 Trello — karty na liście",
+  trello_get_card: "📋 Trello — szczegóły karty",
+  trello_search: "🔍 Trello — wyszukiwanie",
+  trello_comment: "💬 Trello — komentarz",
+  trello_archive: "🗄️ Trello — archiwizacja",
+  gmail_search: "📧 Gmail — wyszukiwanie",
+  gmail_thread: "📧 Gmail — wątek",
+  gmail_trash: "🗑️ Gmail — kosz",
+  gmail_mark_read: "📧 Gmail — oznacz przeczytane",
+  gmail_star: "⭐ Gmail — gwiazdka",
+  gmail_labels: "🏷️ Gmail — etykiety",
   trello_create_card: "📋 Trello — nowa karta",
   trello_move_card: "📋 Trello — przeniesienie karty",
   gmail_send: "📧 Gmail — wysłanie emaila",
@@ -1675,7 +1713,6 @@ function ActionBubble({
     );
   }
 
-  // Parse "✅ action_name: {json}"
   const match = text.match(/^✅ ([\w_]+): (.+)$/s);
   if (!match) {
     return (
@@ -1692,9 +1729,151 @@ function ActionBubble({
     parsed = JSON.parse(match[2]);
   } catch {}
 
-  const renderValue = (val: any): string => {
-    if (typeof val === "object" && val !== null) return JSON.stringify(val);
-    return String(val);
+  // Dedykowane renderowanie dla różnych typów akcji
+  const renderDetails = () => {
+    if (!parsed)
+      return <div className="text-gray-400 font-mono">{match[2]}</div>;
+
+    // Gmail — wysyłanie
+    if (
+      ["gmail_send", "gmail_draft", "gmail_reply", "gmail_forward"].includes(
+        actionName,
+      )
+    ) {
+      return (
+        <div className="space-y-1.5">
+          {parsed.to && <Row icon="→" label="Do" value={parsed.to} />}
+          {parsed.subject && (
+            <Row icon="📌" label="Temat" value={parsed.subject} />
+          )}
+          {parsed.body && <BodyPreview body={parsed.body} />}
+          {parsed.messageId && (
+            <Row icon="🆔" label="ID" value={parsed.messageId} mono />
+          )}
+        </div>
+      );
+    }
+    {
+      return (
+        <div className="space-y-1.5">
+          {parsed.to && <Row icon="→" label="Do" value={parsed.to} />}
+          {parsed.subject && (
+            <Row icon="📌" label="Temat" value={parsed.subject} />
+          )}
+          {parsed.body && (
+            <div className="mt-2 pt-2 border-t border-emerald-500/15">
+              <div className="text-gray-500 mb-1">✉️ Treść:</div>
+              <div className="text-gray-300 whitespace-pre-wrap leading-relaxed bg-surface-3/30 rounded-lg px-2.5 py-2">
+                {parsed.body}
+              </div>
+            </div>
+          )}
+          {parsed.messageId && (
+            <Row icon="🆔" label="ID" value={parsed.messageId} mono />
+          )}
+        </div>
+      );
+    }
+    {
+      return (
+        <div className="space-y-1.5">
+          {parsed.to && <Row icon="→" label="Do" value={parsed.to} />}
+          {parsed.subject && (
+            <Row icon="📌" label="Temat" value={parsed.subject} />
+          )}
+          {parsed.messageId && (
+            <Row icon="🆔" label="ID" value={parsed.messageId} mono />
+          )}
+          {parsed.threadId && parsed.threadId !== parsed.messageId && (
+            <Row icon="🧵" label="Wątek" value={parsed.threadId} mono />
+          )}
+        </div>
+      );
+    }
+
+    // Gmail — lista/profil
+    if (actionName === "gmail_profile") {
+      return (
+        <div className="space-y-1.5">
+          {parsed.email && <Row icon="📧" label="Konto" value={parsed.email} />}
+          {parsed.messagesTotal != null && (
+            <Row
+              icon="📨"
+              label="Wiadomości"
+              value={parsed.messagesTotal.toLocaleString()}
+            />
+          )}
+          {parsed.threadsTotal != null && (
+            <Row
+              icon="🧵"
+              label="Wątki"
+              value={parsed.threadsTotal.toLocaleString()}
+            />
+          )}
+        </div>
+      );
+    }
+
+    // Trello
+    if (actionName === "trello_create_card") {
+      return (
+        <div className="space-y-1.5">
+          {parsed.name && <Row icon="📋" label="Tytuł" value={parsed.name} />}
+          {parsed.url && (
+            <a
+              href={parsed.url}
+              target="_blank"
+              rel="noopener"
+              className="flex items-center gap-1 text-accent hover:underline text-[10px]"
+            >
+              ↗ Otwórz kartę
+            </a>
+          )}
+        </div>
+      );
+    }
+
+    // Kalendarz
+    if (actionName === "calendar_create") {
+      return (
+        <div className="space-y-1.5">
+          {parsed.summary && (
+            <Row icon="📅" label="Tytuł" value={parsed.summary} />
+          )}
+          {parsed.start?.dateTime && (
+            <Row
+              icon="🕐"
+              label="Start"
+              value={new Date(parsed.start.dateTime).toLocaleString("pl-PL")}
+            />
+          )}
+          {parsed.htmlLink && (
+            <a
+              href={parsed.htmlLink}
+              target="_blank"
+              rel="noopener"
+              className="flex items-center gap-1 text-accent hover:underline text-[10px]"
+            >
+              ↗ Otwórz w kalendarzu
+            </a>
+          )}
+        </div>
+      );
+    }
+
+    // Fallback — generyczna siatka key/value
+    return (
+      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        {Object.entries(parsed).map(([k, v]) => (
+          <div key={k} className="contents">
+            <span className="text-gray-500 font-mono">{k}</span>
+            <span className="text-gray-300 font-mono truncate">
+              {typeof v === "object" ? JSON.stringify(v) : String(v)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   return (
@@ -1712,27 +1891,65 @@ function ActionBubble({
         </span>
       </button>
 
-      {expanded && parsed && (
-        <div className="mt-2 pt-2 border-t border-emerald-500/15 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-          {Object.entries(parsed).map(([k, v]) => (
-            <div key={k} className="contents">
-              <span className="text-gray-500 font-mono">{k}</span>
-              <span
-                className="text-gray-300 font-mono truncate"
-                title={renderValue(v)}
-              >
-                {renderValue(v)}
-              </span>
-            </div>
-          ))}
+      {expanded && (
+        <div className="mt-2 pt-2 border-t border-emerald-500/15">
+          {renderDetails()}
         </div>
       )}
+    </div>
+  );
+}
 
-      {expanded && !parsed && (
-        <div className="mt-2 pt-2 border-t border-emerald-500/15 text-gray-400 font-mono">
-          {match[2]}
-        </div>
-      )}
+function Row({
+  icon,
+  label,
+  value,
+  mono = false,
+}: {
+  icon: string;
+  label: string;
+  value: string | number;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="shrink-0">{icon}</span>
+      <span className="text-gray-500 shrink-0">{label}:</span>
+      <span
+        className={`text-gray-200 truncate ${mono ? "font-mono text-[10px]" : ""}`}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function BodyPreview({ body }: { body: string }) {
+  const [open, setOpen] = useState(false);
+  const preview = body.split("\n").find((l) => l.trim()) ?? body.slice(0, 60);
+  const hasMore = body.trim().length > preview.length + 5;
+
+  return (
+    <div className="mt-1.5 pt-1.5 border-t border-emerald-500/15">
+      <div className="text-gray-500 mb-1">✉️ Treść:</div>
+      <div className="text-gray-300 bg-surface-3/30 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed">
+        {open ? (
+          <span className="whitespace-pre-wrap">{body}</span>
+        ) : (
+          <span className="text-gray-400 italic">
+            {preview}
+            {hasMore ? "…" : ""}
+          </span>
+        )}
+        {hasMore && (
+          <button
+            onClick={() => setOpen(!open)}
+            className="ml-2 text-accent hover:text-accent/80 text-[10px] font-medium"
+          >
+            {open ? "zwiń" : "pokaż więcej"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
