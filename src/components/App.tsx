@@ -1734,7 +1734,6 @@ function ActionBubble({
     if (!parsed)
       return <div className="text-gray-400 font-mono">{match[2]}</div>;
 
-    // Gmail — wysyłanie
     if (
       ["gmail_send", "gmail_draft", "gmail_reply", "gmail_forward"].includes(
         actionName,
@@ -1753,45 +1752,7 @@ function ActionBubble({
         </div>
       );
     }
-    {
-      return (
-        <div className="space-y-1.5">
-          {parsed.to && <Row icon="→" label="Do" value={parsed.to} />}
-          {parsed.subject && (
-            <Row icon="📌" label="Temat" value={parsed.subject} />
-          )}
-          {parsed.body && (
-            <div className="mt-2 pt-2 border-t border-emerald-500/15">
-              <div className="text-gray-500 mb-1">✉️ Treść:</div>
-              <div className="text-gray-300 whitespace-pre-wrap leading-relaxed bg-surface-3/30 rounded-lg px-2.5 py-2">
-                {parsed.body}
-              </div>
-            </div>
-          )}
-          {parsed.messageId && (
-            <Row icon="🆔" label="ID" value={parsed.messageId} mono />
-          )}
-        </div>
-      );
-    }
-    {
-      return (
-        <div className="space-y-1.5">
-          {parsed.to && <Row icon="→" label="Do" value={parsed.to} />}
-          {parsed.subject && (
-            <Row icon="📌" label="Temat" value={parsed.subject} />
-          )}
-          {parsed.messageId && (
-            <Row icon="🆔" label="ID" value={parsed.messageId} mono />
-          )}
-          {parsed.threadId && parsed.threadId !== parsed.messageId && (
-            <Row icon="🧵" label="Wątek" value={parsed.threadId} mono />
-          )}
-        </div>
-      );
-    }
 
-    // Gmail — lista/profil
     if (actionName === "gmail_profile") {
       return (
         <div className="space-y-1.5">
@@ -1814,7 +1775,84 @@ function ActionBubble({
       );
     }
 
-    // Trello
+    if (actionName === "trello_board") {
+      const board = parsed.board;
+      const lists: any[] = parsed.lists || [];
+      const totalCards = lists.reduce(
+        (sum: number, l: any) => sum + (l.cards?.length || 0),
+        0,
+      );
+      return (
+        <div className="space-y-2">
+          {board?.name && <Row icon="📋" label="Board" value={board.name} />}
+          {board?.url && (
+            <a
+              href={board.url}
+              target="_blank"
+              rel="noopener"
+              className="flex items-center gap-1 text-accent hover:underline text-[10px]"
+            >
+              ↗ Otwórz w Trello
+            </a>
+          )}
+          {board?.lastActivity && (
+            <Row
+              icon="🕐"
+              label="Aktywność"
+              value={new Date(board.lastActivity).toLocaleDateString("pl-PL")}
+            />
+          )}
+          <Row
+            icon="📊"
+            label="Listy"
+            value={`${lists.length} | ${totalCards} kart`}
+          />
+          {lists.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-emerald-500/15 space-y-2">
+              {lists.map((list: any) => (
+                <div key={list.id}>
+                  <div className="flex items-center gap-2 text-[11px] mb-1">
+                    <span className="text-emerald-400 font-medium">
+                      📋 {list.name}
+                    </span>
+                    <span className="text-gray-600">
+                      ({list.cards?.length || 0})
+                    </span>
+                  </div>
+                  {list.cards?.map((card: any) => (
+                    <div
+                      key={card.id}
+                      className="pl-3 border-l border-emerald-500/20 mb-1"
+                    >
+                      <a
+                        href={card.url}
+                        target="_blank"
+                        rel="noopener"
+                        className="text-[11px] text-gray-200 hover:text-accent hover:underline"
+                      >
+                        📝 {card.name}
+                      </a>
+                      {card.description && (
+                        <div className="text-[10px] text-gray-500 truncate">
+                          {card.description.slice(0, 80)}
+                          {card.description.length > 80 ? "…" : ""}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {(!list.cards || list.cards.length === 0) && (
+                    <div className="pl-3 text-[10px] text-gray-600 italic">
+                      pusta
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     if (actionName === "trello_create_card") {
       return (
         <div className="space-y-1.5">
@@ -1833,7 +1871,6 @@ function ActionBubble({
       );
     }
 
-    // Kalendarz
     if (actionName === "calendar_create") {
       return (
         <div className="space-y-1.5">
@@ -1861,7 +1898,6 @@ function ActionBubble({
       );
     }
 
-    // Fallback — generyczna siatka key/value
     return (
       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         {Object.entries(parsed).map(([k, v]) => (
